@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <Robi>লাইভ টিভি</Robi>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0d1117;
+      color: #eef2f7;
+      font: 16px system-ui, sans-serif;
+    }
+    header {
+      position: sticky; top: 0; z-index: 2;
+      padding: 16px 5%;
+      background: #151b24;
+      border-bottom: 1px solid #293241;
+    }
+    .brand { font-size: 1.25rem; font-weight: 700; }
+    .brand span { color: #36d399; }
+    main { max-width: 1200px; margin: auto; padding: 22px 5%; }
+    .layout { display: grid; grid-template-columns:  minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; }
+    .player, .sidebar { background: #151b24; border: 1px solid #293241; border-radius: 12px; }
+    .player { padding: 14px; }
+    video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; }
+    #nowPlaying { margin: 10px 0 0; color: #c6d0dc; }
+    .sidebar { padding: 14px; }
+    .filters { display: grid; gap: 9px; margin-bottom: 12px; }
+    input, select {
+      width: 100%; padding: 10px 12px; border-radius: 8px;
+      color: #eef2f7; background: #0d1117; border: 1px solid #364152;
+    }
+    #channels { max-height: 440px; overflow: auto; display: grid; gap: 7px; }
+    .channel {
+      width: 100%; padding: 10px; text-align: left; cursor: pointer;
+      color: #eef2f7; background: #202936; border: 1px solid transparent;
+      border-radius: 8px;
+    }
+    .channel:hover, .channel.active { border-color: #36d399; background: #263a38; }
+    .channel small { display: block; margin-top: 3px; color: #9aa8b8; }
+    #status { color: #aab6c5; font-size: .9rem; }
+    @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header><div class="brand">📺 <span>লাইভ</span> টিভি</div></header>
+
+  <main>
+    <div class="layout">
+      <section class="player">
+        <video id="video" controls playsinline></video>
+        <p id="nowPlaying">একটি চ্যানেল বেছে নিন</p>
+      </section>
+
+      <aside class="sidebar">
+        <div class="filters">
+          <input id="search" type="search" placeholder="চ্যানেল খুঁজুন">
+          <select id="category">
+            <option value="">সব ক্যাটাগরি</option>
+          </select>
+        </div>
+        <p id="status">প্লেলিস্ট লোড হচ্ছে…</p>
+        <div id="channels"></div>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    const PLAYLIST_URL = "https://iptv-org.github.io/iptv/index.m3u";
+    const video = document.querySelector("#video");
+    const channelsEl = document.querySelector("#channels");
+    const statusEl = document.querySelector("#status");
+    const nowPlaying = document.querySelector("#nowPlaying");
+    const searchEl = document.querySelector("#search");
+    const categoryEl = document.querySelector("#category");
+
+    let channels = [];
+    let player = null;
+
+    function parsePlaylist(text) {
+      const lines = text.split(/\r?\n/);
+      const items = [];
+      let info = "";
+
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (line.startsWith("#EXTINF")) {
+          info = line;
+        } else if (line && !line.startsWith("#")) {
+          const name = info.match(/,(.*)$/)?.[1]?.trim() || "নামহীন চ্যানেল";
+          const group = info.match(/group-title="([^"]*)"/)?.[1] || "অন্যান্য";
+          items.push({ name, group, url: line });
+          info = "";
+        }
+      }
+      return items;
+    }
+
+    function setupCategories() {
+      const groups = [...new Set(channels.map(c => c.group))].sort();
+      categoryEl.replaceChildren(new Option("সব ক্যাটাগরি", ""));
+      for (const group of groups) categoryEl.add(new Option(group, group));
+    }
+
+    function renderChannels() {
+      const query = searchEl.value.trim().toLowerCase();
+      const group = categoryEl.value;
+      const filtered = channels.filter(c =>
+        c.name.toLowerCase().includes(query) &&
+        (!group || c.group === group)
+      );
+
+      channelsEl.replaceChildren();
+      for (const channel of filtered.slice(0, 300)) {
+        const button = document.createElement("button");
+        button.className = "channel";
+        button.innerHTML = "";
+        button.append(document.createTextNode(channel.name));
+        const small = document.createElement("small");
+        small.textContent = channel.group;
+        button.append(small);
+        button.addEventListener("click", () => playChannel(channel, button));
+        channelsEl.append(button);
+      }
+
+      statusEl.textContent = `${filtered.length}টি চ্যানেল`;
+    }
+
+    function playChannel(channel, button) {
+      document.querySelectorAll(".channel").forEach(el => el.classList.remove("active"));
+      button.classList.add("active");
+      nowPlaying.textContent = `এখন চলছে: ${channel.name}`;
+
+      if (player) {
+        player.destroy();
+        player = null;
+      }
+
+      if (Hls.isSupported()) {
+        player = new Hls();
+        player.loadSource(channel.url);
+        player.attachMedia(video);
+        player.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        player.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) nowPlaying.textContent = `স্ট্রিম চালানো যাচ্ছে না: ${channel.name}`;
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = channel.url;
+        video.play().catch(() => {});
+      } else {
+        nowPlaying.textContent = "এই ব্রাউজারে এই স্ট্রিম ফরম্যাট সমর্থিত নয়।";
+      }
+    }
+
+    async function loadPlaylist() {
+      try {
+        const response = await fetch(PLAYLIST_URL);
+        if (!response.ok) throw new Error("Playlist request failed");
+        channels = parsePlaylist(await response.text());
+        setupCategories();
+        renderChannels();
+      } catch (error) {
+        statusEl.textContent = "প্লেলিস্ট লোড হয়নি—নেটওয়ার্ক বা CORS সমস্যা হতে পারে।";
+        console.error(error);
+      }
+    }
+
+    searchEl.addEventListener("input", renderChannels);
+    categoryEl.addEventListener("change", renderChannels);
+    loadPlaylist();
+  </script>
+</body>
+</html>
